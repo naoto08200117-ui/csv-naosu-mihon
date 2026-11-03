@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CSV を直す道具</title>
+<style>
+  :root {
+    --bg: #f3f1ec; --card: #ffffff; --ink: #1f2a44; --sub: #4b5563; --muted: #6b7280;
+    --line: #d6d9e0; --blue: #2b5797; --green: #1a7f3c; --red: #b42318; --redbg: #fde8e7;
+    --yel: #fff3cd; --grn: #e6f4ea;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "BIZ UDPGothic", "Yu Gothic UI", "Meiryo", sans-serif; line-height: 1.6; }
+  header { background: var(--ink); color: #fff; padding: 20px 24px; }
+  header h1 { margin: 0; font-size: 24px; }
+  header p { margin: 4px 0 0; font-size: 14px; color: #d1d5db; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-top: 16px; }
+  h2 { font-size: 18px; margin: 0 0 10px; }
+  .drop { border: 3px dashed #9aa5b8; border-radius: 12px; padding: 34px 16px; text-align: center; background: #fafbfc; cursor: pointer; }
+  .drop.over { border-color: var(--blue); background: #eef3fb; }
+  .drop strong { font-size: 20px; display: block; }
+  .drop span { color: var(--muted); font-size: 14px; }
+  .note { font-size: 14px; color: var(--sub); }
+  .safe { background: var(--grn); border-radius: 8px; padding: 8px 12px; font-size: 14px; }
+  .opts label { display: block; margin: 6px 0; font-size: 15px; }
+  .summary li { margin: 4px 0; }
+  .tag { display: inline-block; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 700; color: #fff; background: var(--blue); margin-right: 6px; }
+  .tag.red { background: var(--red); }
+  .tag.grn { background: var(--green); }
+  .cols { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 6px; }
+  .tables { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 800px) { .tables { grid-template-columns: 1fr; } }
+  .tables > div { min-width: 0; }
+  .tw { overflow: auto; max-height: 420px; border: 1px solid var(--line); border-radius: 8px; }
+  table { border-collapse: collapse; font-size: 13px; width: 100%; }
+  th, td { border: 1px solid var(--line); padding: 4px 6px; white-space: pre; text-align: left; }
+  th { background: #eef1f6; position: sticky; top: 0; }
+  td.bad { background: var(--redbg); color: var(--red); }
+  td.fix { background: var(--yel); }
+  button { font: inherit; font-size: 17px; font-weight: 700; padding: 12px 26px; border-radius: 10px; border: none; background: var(--green); color: #fff; cursor: pointer; }
+  button:disabled { background: #9ca3af; cursor: default; }
+  .err { color: var(--red); font-weight: 700; }
+  .hidden { display: none; }
+  footer { text-align: center; color: var(--muted); font-size: 13px; margin-top: 30px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>CSV を直す道具</h1>
+  <p>Excel で開くと「文字化けする」「頭の0が消える」「品番が日付に変わる」CSV を、崩れない形で保存し直します。</p>
+</header>
+<main>
+  <div class="card">
+    <h2>1. CSV を選ぶ</h2>
+    <div class="drop" id="drop" tabindex="0" role="button" aria-label="CSV ファイルを選ぶ">
+      <strong>ここに CSV ファイルを置く（またはクリックして選ぶ）</strong>
+      <span>ファイルを枠の上まで引っぱって離すか、枠をクリックして選びます（1つずつ）</span><br><span>試すための架空の CSV：<a href="sample/1_mojibake_UTF8.csv" download>文字化け用</a>・<a href="sample/2_zero_ShiftJIS.csv" download>頭の0用</a>・<a href="sample/3_date_UTF8.csv" download>日付用</a></span>
+    </div>
+    <input type="file" id="file" accept=".csv,text/csv" class="hidden">
+    <p class="safe">ファイルはこのパソコンの中だけで読み込みます。インターネットには送りません。</p>
+    <p id="msg" class="err"></p>
+  </div>
+
+  <div class="card hidden" id="step2">
+    <h2>2. 直す内容を確かめる</h2>
+    <ul class="summary" id="summary"></ul>
+    <div class="opts">
+      <label><input type="radio" name="mode" value="excel" checked> <b>Excel で開く用</b>（文字コードを直し、頭の0・長い番号・日付に化ける値を守る）</label>
+      <label><input type="radio" name="mode" value="plain"> <b>ほかのシステムに取り込む用</b>（文字コードだけ直す。値はそのまま）</label>
+    </div>
+    <p class="note">「Excel で開く用」は、守る値を <code>="0123"</code> の形で書きます。Excel では 0123 と表示されますが、ほかのシステムに取り込むと記号が残るので、その場合は下の形を選んでください。</p>
+    <div id="colbox"><b>守る列</b>（チェックを外すと、その列はそのままにします）<div class="cols" id="cols"></div></div>
+  </div>
+
+  <div class="card hidden" id="step3">
+    <h2>3. 直す前と後</h2>
+    <p class="note">赤：そのまま Excel で開くと崩れる値　黄：直した CSV を Excel で開いたときに、書いたまま見える値（上から30行まで表示）</p>
+    <div class="tables">
+      <div><b>直す前（Excel で開くと崩れる所）</b><div class="tw" id="before"></div></div>
+      <div><b>直した後（黄＝守った値。赤のままの値は、Excel で開くと崩れます）</b><div class="tw" id="after"></div></div>
+    </div>
+  </div>
+
+  <div class="card hidden" id="step4">
+    <h2>4. 保存する</h2>
+    <button id="save">直した CSV を保存する</button>
+    <p class="note" id="savename"></p>
+  </div>
+
+  <div class="card">
+    <h2>この道具がすること・しないこと</h2>
+    <ul class="note">
+      <li>文字コード：UTF-8 と Shift_JIS を見分けて読み、Excel が正しく読める形（UTF-8・先頭に目印の BOM 付き）で保存します</li>
+      <li>頭の0：<code>0600001</code> のように0で始まる数字、12けた以上の数字（JAN コードなど）を守ります</li>
+      <li>日付に化ける値：<code>1-2</code>・<code>3/4</code>・<code>12月3日</code> のように、年のない値を書いたままに守ります（<code>2026-10-01</code> のような年のある日付は、Excel で日付として使えるよう、そのままにします）</li>
+      <li>読めるのは UTF-8 と Shift_JIS の CSV です（それ以外は正しく読めません）。画面で見比べられるのは上から30行まで、ファイルは 20MB までです</li>
+      <li>1行目は見出しとして扱い、そのままにします</li>
+      <li>しないこと：中身の書きかえ（全角・半角をそろえる、重複を消すなど）。保存する前に、直す前と後を必ず見比べてください</li>
+    </ul>
+  </div>
+  <footer>見本（作成：nao）。外部のライブラリやインターネットの読み込みは使っていません。</footer>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var drop = document.getElementById("drop");
+  var fileInput = document.getElementById("file");
+  var msg = document.getElementById("msg");
+  var state = null; // { name, encoding, rows, protect: [bool], counts: [n], hadBom }
+
+  // ---- 文字コードの見分け ----
+  function decode(buf) {
+    var bytes = new Uint8Array(buf);
+    var hadBom = bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF;
+    try {
+      var text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      if (hadBom) text = text.slice(1);
+      return { text: text, encoding: "UTF-8", hadBom: hadBom };
+    } catch (e) {
+      var sj = new TextDecoder("shift_jis").decode(bytes);
+      return { text: sj, encoding: "Shift_JIS", hadBom: false };
+    }
+  }
+
+  // ---- CSV を読む（" で囲んだ中のカンマ・改行・"" に対応） ----
+  function parseCsv(text) {
+    var rows = [], row = [], cell = "", i = 0, q = false, ch;
+    while (i < text.length) {
+      ch = text[i];
+      if (q) {
+        if (ch === '"') {
+          if (text[i + 1] === '"') { cell += '"'; i += 2; continue; }
+          q = false; i++; continue;
+        }
+        cell += ch; i++; continue;
+      }
+      if (ch === '"') { q = true; i++; continue; }
+      if (ch === ",") { row.push(cell); cell = ""; i++; continue; }
+      if (ch === "\r") { i++; continue; }
+      if (ch === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; i++; continue; }
+      cell += ch; i++;
+    }
+    if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+    return rows;
+  }
+
+  // ---- Excel で崩れる値の見分け ----
+  var reZero = /^0\d+$/;                 // 0 で始まる数字
+  var reLong = /^\d{12,}$/;              // 12けた以上（指数の表示や桁落ち）
+  // 年の入っていない「1-2」「3/4」「12月3日」だけを守る（2026-10-01 のような本当の日付は、Excel で日付になってよいので守らない）
+  var reDate = /^(\d{1,2}[-\/]\d{1,2}|\d{1,2}月\d{1,2}日)$/;
+  var reExp = /^\d+[eE]\d+$/;          // 1E5 のような品番（Excel が指数の数にする）
+  function risk(v) {
+    if (reZero.test(v)) return "頭の0";
+    if (reLong.test(v)) return "長い番号";
+    if (reDate.test(v)) return "日付に化ける";
+    if (reExp.test(v)) return "数に化ける";
+    return "";
+  }
+
+  function esc(v) {
+    if (/[",\r\n]/.test(v)) return '"' + v.replace(/"/g, '""') + '"';
+    return v;
+  }
+  function fixCell(v, colIdx, rowIdx, mode) {
+    if (mode !== "excel" || rowIdx === 0 || !state.protect[colIdx] || !risk(v)) return esc(v);
+    return '"=""' + v.replace(/"/g, '""""') + '"""';
+  }
+  function shownAfter(v) {
+    return v; // Excel で開いたときの見え方（守った値は書いたまま見える）
+  }
+
+  function h(tag, text, cls) {
+    var e = document.createElement(tag);
+    if (text != null) e.textContent = text;
+    if (cls) e.className = cls;
+    return e;
+  }
+
+  function render() {
+    var mode = document.querySelector('input[name="mode"]:checked').value;
+    var rows = state.rows, ncol = state.ncol;
+    // まとめ
+    var ul = document.getElementById("summary");
+    ul.innerHTML = "";
+    var li = h("li");
+    li.appendChild(h("span", state.encoding === "UTF-8" ? (state.hadBom ? "UTF-8（BOM 付き）" : "UTF-8（BOM なし）") : "Shift_JIS", "tag"));
+    li.appendChild(document.createTextNode(
+      state.encoding === "UTF-8" && !state.hadBom ? "と見分けました。このままだと Excel で文字化けします → 目印（BOM）を付けて保存します" :
+      "と見分けました → Excel で文字化けしない UTF-8（BOM 付き）で保存します"));
+    ul.appendChild(li);
+    var li2 = h("li");
+    li2.appendChild(h("span", (rows.length - 1) + " 行 × " + ncol + " 列", "tag grn"));
+    li2.appendChild(document.createTextNode("を読みました"));
+    ul.appendChild(li2);
+    var total = 0;
+    state.counts.forEach(function (c) { total += c; });
+    var li3 = h("li");
+    li3.appendChild(h("span", total + " 個", total ? "tag red" : "tag grn"));
+    li3.appendChild(document.createTextNode(total ? "の値が Excel で崩れます（頭の0・長い番号・日付に化ける値）" : "Excel で崩れる値はありません"));
+    ul.appendChild(li3);
+    if (state.badWidth) {
+      var li4 = h("li");
+      li4.appendChild(h("span", "注意", "tag red"));
+      li4.appendChild(document.createTextNode("列の数がそろっていない行が " + state.badWidth + " 行あります（そのまま保存します）"));
+      ul.appendChild(li4);
+    }
+    // 守る列
+    var cols = document.getElementById("cols");
+    cols.innerHTML = "";
+    document.getElementById("colbox").style.display = (mode === "excel" && total) ? "" : "none";
+    state.counts.forEach(function (c, i) {
+      if (!c) return;
+      var lab = h("label");
+      var cb = document.createElement("input");
+      cb.type = "checkbox"; cb.checked = state.protect[i];
+      cb.addEventListener("change", function () { state.protect[i] = cb.checked; render(); });
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(" " + (rows[0][i] || ("列" + (i + 1))) + "（" + c + " 個）"));
+      cols.appendChild(lab);
+    });
+    // 前と後
+    var LIM = Math.min(rows.length, 31);
+    function table(after) {
+      var t = h("table"), tb = h("tbody");
+      for (var r = 0; r < LIM; r++) {
+        var tr = h("tr");
+        for (var c = 0; c < ncol; c++) {
+          var v = rows[r][c] == null ? "" : rows[r][c];
+          var cell = h(r === 0 ? "th" : "td", after ? shownAfter(v) : v);
+          if (r > 0 && risk(v)) {
+            if (!after) cell.className = "bad";
+            else if (mode === "excel" && state.protect[c]) cell.className = "fix";
+            else cell.className = "bad";
+          }
+          tr.appendChild(cell);
+        }
+        tb.appendChild(tr);
+      }
+      t.appendChild(tb);
+      return t;
+    }
+    var b = document.getElementById("before"), a = document.getElementById("after");
+    b.innerHTML = ""; a.innerHTML = "";
+    b.appendChild(table(false)); a.appendChild(table(true));
+    document.getElementById("savename").textContent = "保存する名前：" + outName();
+  }
+
+  function outName() {
+    return state.name.replace(/\.csv$/i, "") + "_直した.csv";
+  }
+
+  function load(file) {
+    msg.textContent = "";
+    if (!file) return;
+    if (!/\.csv$/i.test(file.name) && file.type !== "text/csv") {
+      msg.textContent = "CSV ファイル（.csv）を選んでください。";
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      msg.textContent = "ファイルが大きすぎます（20MB まで）。";
+      return;
+    }
+    var fr = new FileReader();
+    fr.onload = function () {
+      var d = decode(fr.result);
+      var rows = parseCsv(d.text);
+      if (!rows.length) { msg.textContent = "中身が空のようです。"; return; }
+      var ncol = 0;
+      rows.forEach(function (r) { if (r.length > ncol) ncol = r.length; });
+      var counts = [], protect = [], badWidth = 0;
+      for (var c = 0; c < ncol; c++) { counts.push(0); }
+      rows.forEach(function (r, ri) {
+        if (ri > 0 && r.length !== rows[0].length) badWidth++;
+        if (ri === 0) return;
+        r.forEach(function (v, ci) { if (risk(v)) counts[ci]++; });
+      });
+      counts.forEach(function (c) { protect.push(c > 0); });
+      state = { name: file.name, encoding: d.encoding, hadBom: d.hadBom, rows: rows, ncol: ncol, counts: counts, protect: protect, badWidth: badWidth };
+      ["step2", "step3", "step4"].forEach(function (id) { document.getElementById(id).classList.remove("hidden"); });
+      render();
+    };
+    fr.onerror = function () { msg.textContent = "読み込めませんでした。"; };
+    fr.readAsArrayBuffer(file);
+  }
+
+  drop.addEventListener("click", function () { fileInput.click(); });
+  drop.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); } });
+  drop.addEventListener("dragover", function (e) { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", function () { drop.classList.remove("over"); });
+  drop.addEventListener("drop", function (e) { e.preventDefault(); drop.classList.remove("over"); load(e.dataTransfer.files[0]); });
+  fileInput.addEventListener("change", function () { load(fileInput.files[0]); fileInput.value = ""; });
+  document.querySelectorAll('input[name="mode"]').forEach(function (r) { r.addEventListener("change", function () { if (state) render(); }); });
+
+  document.getElementById("save").addEventListener("click", function () {
+    if (!state) return;
+    var mode = document.querySelector('input[name="mode"]:checked').value;
+    var lines = state.rows.map(function (r, ri) {
+      var cells = [];
+      for (var c = 0; c < r.length; c++) cells.push(fixCell(r[c], c, ri, mode));
+      return cells.join(",");
+    });
+    var blob = new Blob(["﻿" + lines.join("\r\n") + "\r\n"], { type: "text/csv;charset=utf-8" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = outName();
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  });
+})();
+</script>
+</body>
+</html>
